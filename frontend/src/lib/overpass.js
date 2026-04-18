@@ -14,28 +14,33 @@ function haversine(lat1, lon1, lat2, lon2) {
 }
 
 /** Query Overpass for the nearest element matching a tag, within `radius` metres */
-async function findNearest(lat, lon, tagKey, tagValue, radius = 3000) {
-  const query = `
-    [out:json][timeout:12];
+async function findNearest(lat, lon, query, radius = 5000) {
+  const fullQuery = `
+    [out:json][timeout:20];
     (
-      node["${tagKey}"="${tagValue}"](around:${radius},${lat},${lon});
-      way["${tagKey}"="${tagValue}"](around:${radius},${lat},${lon});
+      ${query.replace(/RADIUS/g, radius).replace(/LAT/g, lat).replace(/LON/g, lon)}
     );
-    out center 1;
+    out center 5;
   `
   const res = await fetch(OVERPASS_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(query),
+    body: 'data=' + encodeURIComponent(fullQuery),
   })
   if (!res.ok) return null
   const data = await res.json()
   if (!data.elements || data.elements.length === 0) return null
-  const el = data.elements[0]
-  const elLat = el.lat ?? el.center?.lat
-  const elLon = el.lon ?? el.center?.lon
-  if (elLat == null || elLon == null) return null
-  return haversine(lat, lon, elLat, elLon)
+
+  // Find the closest element from up to 5 results
+  let minDist = Infinity
+  for (const el of data.elements) {
+    const elLat = el.lat ?? el.center?.lat
+    const elLon = el.lon ?? el.center?.lon
+    if (elLat == null || elLon == null) continue
+    const d = haversine(lat, lon, elLat, elLon)
+    if (d < minDist) minDist = d
+  }
+  return minDist === Infinity ? null : minDist
 }
 
 /**
@@ -43,10 +48,30 @@ async function findNearest(lat, lon, tagKey, tagValue, radius = 3000) {
  * Falls back to sensible defaults if Overpass is slow / unreachable.
  */
 export async function getAmenityDistances(lat, lon) {
+  // Station query
+  const stationQuery = `
+    node["railway"="station"](around:RADIUS,LAT,LON);
+    way["railway"="station"](around:RADIUS,LAT,LON);
+  `
+
+  // School query
+  const schoolQuery = `
+    node["amenity"="school"](around:RADIUS,LAT,LON);
+    way["amenity"="school"](around:RADIUS,LAT,LON);
+  `
+
+  // Green space — broad search covering parks, gardens, commons,
+  // nature reserves and recreation grounds (all common in the UK)
+  const parkQuery = `
+    node["leisure"~"park|nature_reserve|recreation_ground|common|garden|pitch"](around:RADIUS,LAT,LON);
+    way["leisure"~"park|nature_reserve|recreation_ground|common|garden|pitch"](around:RADIUS,LAT,LON);
+    way["landuse"~"recreation_ground|village_green|grass|greenfield"](around:RADIUS,LAT,LON);
+  `
+
   const [station, school, park] = await Promise.allSettled([
-    findNearest(lat, lon, 'railway', 'station'),
-    findNearest(lat, lon, 'amenity', 'school'),
-    findNearest(lat, lon, 'leisure', 'park'),
+    findNearest(lat, lon, stationQuery),
+    findNearest(lat, lon, schoolQuery),
+    findNearest(lat, lon, parkQuery),
   ])
 
   return {
