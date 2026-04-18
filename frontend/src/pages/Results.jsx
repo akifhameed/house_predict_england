@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { useLocation, useNavigate, Navigate } from 'react-router-dom'
+import { useLocation, useNavigate, Navigate, Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import { savePrediction, getHistory, removePrediction, clearHistory } from '../lib/supabase'
+import { useAuth } from '../context/AuthContext'
 
 const LOG_RMSE = 0.2408
 
@@ -47,17 +48,25 @@ export default function Results() {
   const navigate = useNavigate()
 
   // All hooks MUST be called unconditionally before any early return
+  const { user }              = useAuth()
   const [history, setHistory] = useState([])
-  const [saved, setSaved]     = useState(false)
+  const [saved,   setSaved]   = useState(false)
   const [savedId, setSavedId] = useState(null)
+  const [saving,  setSaving]  = useState(false)
 
   const prediction = location.state?.prediction
   const formData   = location.state?.formData
 
-  /* ── Load history ── */
+  /* ── Load history from Supabase ── */
   useEffect(() => {
-    setHistory(getHistory())
-  }, [])
+    let live = true
+    if (user) {
+      getHistory().then(rows => { if (live) setHistory(rows) })
+    } else {
+      setHistory([])
+    }
+    return () => { live = false }
+  }, [user?.id])
 
   // Per-prediction contributions come directly from the /predict response
   const contributions = prediction?.feature_contributions || []
@@ -68,37 +77,82 @@ export default function Results() {
   }
 
   /* ── Delete one history row ── */
-  function handleDelete(id) {
-    removePrediction(id)
+  async function handleDelete(id) {
+    await removePrediction(id)
     setHistory(prev => prev.filter(r => r.id !== id))
-    // If the user deletes the entry they just saved, reset the button
-    if (id === savedId) {
-      setSaved(false)
-      setSavedId(null)
-    }
+    if (id === savedId) { setSaved(false); setSavedId(null) }
   }
 
   /* ── Clear all history ── */
-  function handleClearAll() {
-    clearHistory()
+  async function handleClearAll() {
+    await clearHistory()
     setHistory([])
     setSaved(false)
     setSavedId(null)
   }
 
+  /* ── Share via WhatsApp ── */
+  function shareWhatsApp() {
+    const msg = [
+      `🏠 *Property Valuation — ${formData.postcode}*`,
+      ``,
+      `Estimated Value: *${fmt(prediction.predicted_price)}*`,
+      `Expected Range: ${fmt(typical_lo)} – ${fmt(typical_hi)}`,
+      ``,
+      `Property: ${propLabel} · ${formData.floor_area_sqm} m²`,
+      `Tenure: ${tenureLabel}`,
+      `EPC Score: ${formData.current_epc_score}`,
+      ``,
+      `Valuation by HousePredict`,
+    ].join('\n')
+    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank')
+  }
+
+  /* ── Share via Email ── */
+  function shareEmail() {
+    const subject = `Property Valuation — ${formData.postcode}`
+    const body = [
+      `Hi,`,
+      ``,
+      `Here are the results of my HousePredict property valuation:`,
+      ``,
+      `Postcode:        ${formData.postcode}`,
+      `Estimated Value: ${fmt(prediction.predicted_price)}`,
+      `Expected Range:  ${fmt(typical_lo)} – ${fmt(typical_hi)}`,
+      ``,
+      `Property Type:   ${propLabel}`,
+      `Floor Area:      ${formData.floor_area_sqm} m²`,
+      `Tenure:          ${tenureLabel}`,
+      `EPC Score:       ${formData.current_epc_score}`,
+      `Construction:    ${ageBandDisplay}`,
+      ``,
+      `Valuation provided by HousePredict`,
+    ].join('\n')
+    window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  }
+
   /* ── Save prediction ── */
-  function handleSave() {
-    const entry = savePrediction({
-      postcode:        formData.postcode,
-      property_type:   PROPERTY_LABELS[formData.property_type] || formData.property_type,
-      floor_area_sqm:  formData.floor_area_sqm,
-      predicted_price: prediction.predicted_price,
-      confidence_low:  prediction.lower_bound,
-      confidence_high: prediction.upper_bound,
-    })
-    setHistory(prev => [entry, ...prev])
-    setSaved(true)
-    setSavedId(entry.id)
+  async function handleSave() {
+    if (!user) { navigate('/login'); return }
+    setSaving(true)
+    try {
+      const entry = await savePrediction({
+        postcode:        formData.postcode,
+        property_type:   PROPERTY_LABELS[formData.property_type] || formData.property_type,
+        predicted_price: prediction.predicted_price,
+        price_low:       typical_lo,
+        price_high:      typical_hi,
+        inputs:          { floor_area_sqm: formData.floor_area_sqm },
+        contributions:   contributions,
+      })
+      setHistory(prev => [entry, ...prev])
+      setSaved(true)
+      setSavedId(entry.id)
+    } catch (err) {
+      console.error('Save failed:', err)
+    } finally {
+      setSaving(false)
+    }
   }
 
   /* ── 68% Typical Range — ±1σ in log-space, back-transformed ── */
@@ -294,14 +348,55 @@ export default function Results() {
                   <span className="material-symbols-outlined">add_circle</span>
                   Predict Another Property
                 </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saved}
-                  className="w-full bg-surface-container-highest text-primary py-4 rounded-xl font-bold hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  <span className="material-symbols-outlined">{saved ? 'check_circle' : 'bookmark'}</span>
-                  {saved ? 'Saved to History' : 'Save to History'}
-                </button>
+
+                {user ? (
+                  <button
+                    onClick={handleSave}
+                    disabled={saved || saving}
+                    className="w-full bg-surface-container-highest text-primary py-4 rounded-xl font-bold hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    <span className="material-symbols-outlined">
+                      {saving ? 'progress_activity' : saved ? 'check_circle' : 'bookmark'}
+                    </span>
+                    {saving ? 'Saving…' : saved ? 'Saved to History' : 'Save to History'}
+                  </button>
+                ) : (
+                  <Link
+                    to="/login"
+                    className="w-full bg-surface-container-highest text-primary py-4 rounded-xl font-bold hover:bg-surface-container-high transition-all flex items-center justify-center gap-2"
+                  >
+                    <span className="material-symbols-outlined">login</span>
+                    Sign in to Save
+                  </Link>
+                )}
+
+                {/* Share row */}
+                <div className="pt-1">
+                  <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-2 text-center">
+                    Share this valuation
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={shareWhatsApp}
+                      className="flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm text-white hover:opacity-90 active:scale-95 transition-all"
+                      style={{ background: '#25D366' }}
+                    >
+                      <svg viewBox="0 0 24 24" className="w-5 h-5 fill-white flex-shrink-0" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                        <path d="M12 0C5.373 0 0 5.373 0 12c0 2.122.554 4.118 1.523 5.847L0 24l6.344-1.508A11.948 11.948 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.006-1.374l-.36-.213-3.767.896.953-3.671-.234-.376A9.818 9.818 0 1112 21.818z"/>
+                      </svg>
+                      WhatsApp
+                    </button>
+
+                    <button
+                      onClick={shareEmail}
+                      className="flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm bg-surface-container text-primary hover:bg-surface-container-high active:scale-95 transition-all border border-outline-variant"
+                    >
+                      <span className="material-symbols-outlined text-base">mail</span>
+                      Email
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -333,7 +428,12 @@ export default function Results() {
               <div className="p-12 text-center text-on-surface-variant">
                 <span className="material-symbols-outlined text-5xl text-outline-variant mb-4 block">history</span>
                 <p className="font-semibold">No saved valuations yet.</p>
-                <p className="text-sm mt-1">Click "Save to History" to keep a record of this valuation.</p>
+                <p className="text-sm mt-1">
+                  {user
+                    ? 'Click "Save to History" to keep a record of this valuation.'
+                    : <><Link to="/login" className="text-secondary font-bold hover:underline">Sign in</Link> to save and revisit your valuations.</>
+                  }
+                </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -357,10 +457,10 @@ export default function Results() {
                         <td className="px-6 py-5 text-sm">{fmtDate(row.created_at)}</td>
                         <td className="px-6 py-5 text-sm font-bold">{row.postcode || '—'}</td>
                         <td className="px-6 py-5 text-sm">{row.property_type || '—'}</td>
-                        <td className="px-6 py-5 text-sm">{row.floor_area_sqm ? `${row.floor_area_sqm} m²` : '—'}</td>
+                        <td className="px-6 py-5 text-sm">{row.inputs?.floor_area_sqm ? `${row.inputs.floor_area_sqm} m²` : '—'}</td>
                         <td className="px-6 py-5 text-sm font-bold text-secondary">{fmt(row.predicted_price)}</td>
                         <td className="px-6 py-5 text-sm text-on-surface-variant">
-                          {fmt(row.confidence_low)} – {fmt(row.confidence_high)}
+                          {fmt(row.price_low)} – {fmt(row.price_high)}
                         </td>
                         <td className="px-6 py-5">
                           <button
