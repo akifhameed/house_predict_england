@@ -70,32 +70,19 @@ export async function getAmenityDistances(lat, lon) {
     way["amenity"="school"](around:RADIUS,LAT,LON);
   `
 
-  // Green space — broad search covering parks, gardens, commons,
-  // nature reserves and recreation grounds (all common in the UK)
-  const parkQuery = `
-    node["leisure"~"park|nature_reserve|recreation_ground|common|garden|pitch"](around:RADIUS,LAT,LON);
-    way["leisure"~"park|nature_reserve|recreation_ground|common|garden|pitch"](around:RADIUS,LAT,LON);
-    way["landuse"~"recreation_ground|village_green|grass|greenfield"](around:RADIUS,LAT,LON);
-  `
-
-  const [station, school, park] = await Promise.allSettled([
+  const [station, school] = await Promise.allSettled([
     findNearest(lat, lon, stationQuery),
     findNearest(lat, lon, schoolQuery),
-    findNearest(lat, lon, parkQuery),
   ])
 
   return {
     distance_to_nearest_station_miles:
       station.status === 'fulfilled' && station.value != null
         ? +station.value.toFixed(3)
-        : 0.5,
+        : null,                          // null = not found, caller decides fallback
     distance_to_nearest_school_miles:
       school.status === 'fulfilled' && school.value != null
         ? +school.value.toFixed(3)
-        : 0.3,
-    distance_to_nearest_park_miles:
-      park.status === 'fulfilled' && park.value != null
-        ? +park.value.toFixed(3)
-        : 0.2,
+        : null,
   }
 }

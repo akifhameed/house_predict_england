@@ -4,7 +4,6 @@ import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import { predict as apiPredict, getImd } from '../lib/api'
 import { autocomplete, lookup, extractModelFields } from '../lib/postcodes'
-import { getAmenityDistances } from '../lib/overpass'
 
 /* ── Tooltip component ── */
 function Tooltip({ text }) {
@@ -108,7 +107,6 @@ export default function Predict() {
   const [query, setQuery]           = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [lookupDone, setLookupDone]   = useState(false)
-  const [amenitiesLoading, setAmenitiesLoading] = useState(false)
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
   const dropdownRef = useRef(null)
@@ -143,23 +141,17 @@ export default function Predict() {
     setQuery(postcode)
     setSuggestions([])
     setLookupDone(true)
-    setAmenitiesLoading(true)
     setError('')
     try {
       const result = await lookup(postcode)
       const fields = extractModelFields(result)
       setForm(prev => ({ ...prev, ...fields, postcode }))
-      // Fetch real IMD rank and amenity distances in parallel
-      const [distances, imdRank] = await Promise.all([
-        getAmenityDistances(fields.latitude, fields.longitude),
-        getImd(fields.lsoa_code),
-      ])
-      setForm(prev => ({ ...prev, ...distances, imd_value: imdRank }))
+      // Fetch IMD rank — fast API call, no amenity fetch here
+      const imdRank = await getImd(fields.lsoa_code)
+      setForm(prev => ({ ...prev, imd_value: imdRank }))
     } catch (err) {
       setError('Could not look up postcode — please try another.')
       setLookupDone(false)
-    } finally {
-      setAmenitiesLoading(false)
     }
   }
 
@@ -419,24 +411,16 @@ export default function Predict() {
                 )}
               </div>
               <p className="text-xs text-on-surface-variant/70 italic">
-                Postcode data auto-fills region, local authority, coordinates and amenity distances.
+                Postcode data auto-fills region, local authority and coordinates. Nearby distances are fetched after prediction.
               </p>
-
-              {/* Loading amenities */}
-              {amenitiesLoading && (
-                <div className="flex items-center gap-2 text-secondary text-sm mt-2">
-                  <span className="material-symbols-outlined animate-spin" style={{ animationDuration: '1s' }}>refresh</span>
-                  Fetching nearby amenities…
-                </div>
-              )}
 
               {/* Auto-filled location chips */}
               {lookupDone && form.region_code && (
                 <div className="flex flex-wrap gap-4 pt-4">
                   {[
-                    { icon: 'map',              label: 'Region',          value: form.region_code },
-                    { icon: 'account_balance',  label: 'Local Authority', value: form.local_authority_code },
-                    { icon: 'location_on',      label: 'Coordinates',     value: form.latitude ? `${form.latitude.toFixed(4)}, ${form.longitude.toFixed(4)}` : '—' },
+                    { icon: 'map',             label: 'Region',          value: form.region_code },
+                    { icon: 'account_balance', label: 'Local Authority', value: form.local_authority_code },
+                    { icon: 'location_on',     label: 'Coordinates',     value: form.latitude ? `${form.latitude.toFixed(4)}, ${form.longitude.toFixed(4)}` : '—' },
                   ].map(({ icon, label, value }) => (
                     <div key={label} className="bg-surface-variant/40 px-4 py-3 rounded-lg flex items-center gap-3">
                       <span className="material-symbols-outlined text-sm text-secondary">{icon}</span>
@@ -446,15 +430,6 @@ export default function Predict() {
                       </div>
                     </div>
                   ))}
-                  {form.distance_to_nearest_station_miles != null && (
-                    <div className="bg-surface-variant/40 px-4 py-3 rounded-lg flex items-center gap-3">
-                      <span className="material-symbols-outlined text-sm text-secondary">train</span>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Nearest Station</span>
-                        <span className="text-sm font-bold text-primary">{form.distance_to_nearest_station_miles} mi</span>
-                      </div>
-                    </div>
-                  )}
                 </div>
               )}
             </div>

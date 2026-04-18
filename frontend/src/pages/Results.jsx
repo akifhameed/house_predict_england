@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import { savePrediction, getHistory, removePrediction, clearHistory } from '../lib/supabase'
 import { useAuth } from '../context/AuthContext'
+import { getAmenityDistances } from '../lib/overpass'
 
 const LOG_RMSE = 0.2408
 
@@ -56,6 +57,22 @@ export default function Results() {
 
   const prediction = location.state?.prediction
   const formData   = location.state?.formData
+
+  /* ── Amenity distances — fetched in background on Results page ── */
+  const [amenities, setAmenities]               = useState(null)
+  const [amenitiesLoading, setAmenitiesLoading] = useState(true)
+
+  useEffect(() => {
+    let live = true
+    if (formData?.latitude && formData?.longitude) {
+      getAmenityDistances(formData.latitude, formData.longitude)
+        .then(d  => { if (live) { setAmenities(d); setAmenitiesLoading(false) } })
+        .catch(() => { if (live) setAmenitiesLoading(false) })
+    } else {
+      setAmenitiesLoading(false)
+    }
+    return () => { live = false }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Load history from Supabase ── */
   useEffect(() => {
@@ -261,20 +278,56 @@ export default function Results() {
             {/* Local Context */}
             <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
               <h2 className="text-2xl font-headline font-extrabold text-primary mb-2">Location Snapshot</h2>
-              <p className="text-sm text-on-surface-variant mb-6">Distances sourced from OpenStreetMap for <strong className="text-primary">{formData?.postcode || 'this postcode'}</strong>.</p>
+              <p className="text-sm text-on-surface-variant mb-6">
+                Distances sourced live from OpenStreetMap for <strong className="text-primary">{formData?.postcode || 'this postcode'}</strong>.
+                {amenitiesLoading && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-secondary text-xs font-semibold">
+                    <span className="material-symbols-outlined animate-spin text-sm" style={{ animationDuration: '1s' }}>refresh</span>
+                    Fetching…
+                  </span>
+                )}
+              </p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[
-                  { icon: 'train',    label: 'Nearest Railway Station', value: formData.distance_to_nearest_station_miles != null ? `${formData.distance_to_nearest_station_miles} miles` : 'N/A' },
-                  { icon: 'school',   label: 'Nearest School',          value: formData.distance_to_nearest_school_miles  != null ? `${formData.distance_to_nearest_school_miles} miles`  : 'N/A' },
-                  { icon: 'park',     label: 'Nearest Green Space',     value: formData.distance_to_nearest_park_miles    != null ? `${formData.distance_to_nearest_park_miles} miles`    : 'N/A' },
-                  { icon: 'account_balance', label: 'Bank of England Base Rate', value: `${formData.bank_rate_at_sale_pct}%` },
-                ].map(({ icon, label, value }) => (
-                  <div key={label} className="bg-surface-container-low p-6 rounded-lg">
-                    <span className="material-symbols-outlined text-secondary mb-2 block">{icon}</span>
-                    <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">{label}</p>
-                    <p className="text-xl font-headline font-bold text-primary">{value}</p>
-                  </div>
-                ))}
+                {/* Station */}
+                <div className="bg-surface-container-low p-6 rounded-lg">
+                  <span className="material-symbols-outlined text-secondary mb-2 block">train</span>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Nearest Railway Station</p>
+                  <p className="text-xl font-headline font-bold text-primary">
+                    {amenitiesLoading
+                      ? <span className="text-on-surface-variant text-base font-medium animate-pulse">Fetching…</span>
+                      : amenities?.distance_to_nearest_station_miles != null
+                        ? `${amenities.distance_to_nearest_station_miles} miles`
+                        : 'Not found'}
+                  </p>
+                </div>
+                {/* School */}
+                <div className="bg-surface-container-low p-6 rounded-lg">
+                  <span className="material-symbols-outlined text-secondary mb-2 block">school</span>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Nearest School</p>
+                  <p className="text-xl font-headline font-bold text-primary">
+                    {amenitiesLoading
+                      ? <span className="text-on-surface-variant text-base font-medium animate-pulse">Fetching…</span>
+                      : amenities?.distance_to_nearest_school_miles != null
+                        ? `${amenities.distance_to_nearest_school_miles} miles`
+                        : 'Not found'}
+                  </p>
+                </div>
+                {/* Bank Rate — always available */}
+                <div className="bg-surface-container-low p-6 rounded-lg">
+                  <span className="material-symbols-outlined text-secondary mb-2 block">account_balance</span>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Bank of England Base Rate</p>
+                  <p className="text-xl font-headline font-bold text-primary">{formData.bank_rate_at_sale_pct}%</p>
+                </div>
+                {/* IMD Deprivation — always available */}
+                <div className="bg-surface-container-low p-6 rounded-lg">
+                  <span className="material-symbols-outlined text-secondary mb-2 block">bar_chart</span>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Deprivation Rank (IMD)</p>
+                  <p className="text-xl font-headline font-bold text-primary">
+                    {formData.imd_value != null
+                      ? `${formData.imd_value.toLocaleString('en-GB')} / 32,844`
+                      : '—'}
+                  </p>
+                </div>
               </div>
             </div>
 
