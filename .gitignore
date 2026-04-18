@@ -1,0 +1,49 @@
+# ── Large data files (too big for GitHub) ───────────────────
+dataset.csv
+*.csv
+
+# ── Python ──────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# ── Jupyter ──────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Node ─────────────────────────────────────────────────────
+node_modules/
+dist/
+.vite/
+
+# ── Environment / secrets ────────────────────────────────────
+.env
+.env.local
+.env.production
+
+# ── OS ───────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ──────────────────────────────────────────────────────
+.vscode/
+.idea/
+
+# ── Logs ─────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Vite scaffolding boilerplate (not used in this project) ──
+frontend/src/assets/react.svg
+frontend/src/assets/vite.svg
+frontend/README.md
+frontend/.gitignore
+
+# ── HTML/PNG design prototypes (pre-React wireframes) ────────
+Home/
+Prediction/
+Result/
+How It Works/
