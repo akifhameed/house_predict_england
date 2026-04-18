@@ -1,0 +1,387 @@
+import { useState, useEffect } from 'react'
+import { useLocation, useNavigate, Navigate } from 'react-router-dom'
+import Navbar from '../components/Navbar'
+import Footer from '../components/Footer'
+import { savePrediction, getHistory, removePrediction, clearHistory } from '../lib/supabase'
+
+const LOG_RMSE = 0.2408
+
+/* ── Display-name map for raw feature names ── */
+const FEATURE_NAMES = {
+  floor_area_sqm:                     'Floor Area (m²)',
+  latitude:                           'Latitude',
+  longitude:                          'Longitude',
+  current_epc_score:                  'EPC Energy Score',
+  imd_value:                          'Deprivation Index (IMD)',
+  distance_to_nearest_station_miles:  'Distance to Station',
+  distance_to_nearest_school_miles:   'Distance to School',
+  distance_to_nearest_park_miles:     'Distance to Park',
+  bank_rate_at_sale_pct:              'Bank of England Rate',
+  unemployment_rate_at_sale_pct:      'Unemployment Rate',
+  room_count:                         'Room Count',
+  sale_year:                          'Sale Year',
+  sale_month:                         'Sale Month',
+  is_new_build:                       'New Build Status',
+  property_type:                      'Property Type',
+  tenure_type:                        'Tenure Type',
+  construction_age_band:              'Construction Era',
+  region_code:                        'Region',
+  local_authority_code:               'Local Authority',
+  postcode_district:                  'Postcode District',
+  room_count_was_imputed:             'Room Count (Imputed)',
+}
+
+const PROPERTY_LABELS = { D: 'Detached', S: 'Semi-Detached', T: 'Terraced', F: 'Flat', O: 'Other' }
+const TENURE_LABELS   = { F: 'Freehold', L: 'Leasehold' }
+
+function fmt(n) {
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 0 }).format(n)
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+export default function Results() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  // All hooks MUST be called unconditionally before any early return
+  const [history, setHistory] = useState([])
+  const [saved, setSaved]     = useState(false)
+  const [savedId, setSavedId] = useState(null)
+
+  const prediction = location.state?.prediction
+  const formData   = location.state?.formData
+
+  /* ── Load history ── */
+  useEffect(() => {
+    setHistory(getHistory())
+  }, [])
+
+  // Per-prediction contributions come directly from the /predict response
+  const contributions = prediction?.feature_contributions || []
+
+  // Redirect AFTER all hooks
+  if (!location.state) {
+    return <Navigate to="/predict" replace />
+  }
+
+  /* ── Delete one history row ── */
+  function handleDelete(id) {
+    removePrediction(id)
+    setHistory(prev => prev.filter(r => r.id !== id))
+    // If the user deletes the entry they just saved, reset the button
+    if (id === savedId) {
+      setSaved(false)
+      setSavedId(null)
+    }
+  }
+
+  /* ── Clear all history ── */
+  function handleClearAll() {
+    clearHistory()
+    setHistory([])
+    setSaved(false)
+    setSavedId(null)
+  }
+
+  /* ── Save prediction ── */
+  function handleSave() {
+    const entry = savePrediction({
+      postcode:        formData.postcode,
+      property_type:   PROPERTY_LABELS[formData.property_type] || formData.property_type,
+      floor_area_sqm:  formData.floor_area_sqm,
+      predicted_price: prediction.predicted_price,
+      confidence_low:  prediction.lower_bound,
+      confidence_high: prediction.upper_bound,
+    })
+    setHistory(prev => [entry, ...prev])
+    setSaved(true)
+    setSavedId(entry.id)
+  }
+
+  /* ── 68% Typical Range — ±1σ in log-space, back-transformed ── */
+  const logPred    = prediction.log_prediction
+  const typical_lo = Math.round(Math.expm1(logPred - LOG_RMSE))
+  const typical_hi = Math.round(Math.expm1(logPred + LOG_RMSE))
+
+  const propLabel      = PROPERTY_LABELS[formData.property_type] || formData.property_type
+  const tenureLabel    = TENURE_LABELS[formData.tenure_type]     || formData.tenure_type
+  const ageBandDisplay = formData.construction_age_band === 'Unknown'
+    ? 'Not available'
+    : (formData.construction_age_band || '').replace('England and Wales: ', '')
+
+  return (
+    <div className="bg-background text-on-background font-body antialiased">
+      <Navbar />
+      <main className="pt-16 min-h-screen">
+
+        {/* ─── HERO BAND ─── */}
+        <section
+          className="relative w-full py-16 px-8 overflow-hidden text-white"
+          style={{ background: 'linear-gradient(135deg, #031634 0%, #1a2b4a 100%)' }}
+        >
+          <div className="absolute inset-0 dot-matrix" style={{ opacity: 0.12 }} />
+          <div className="relative z-10 max-w-7xl mx-auto">
+
+            {/* Full width */}
+            <div className="space-y-6 max-w-3xl">
+              <span className="inline-block px-3 py-1 bg-secondary text-white text-[10px] font-bold tracking-widest uppercase rounded font-label">
+                Estimated Market Value · England
+              </span>
+              <h1 className="text-6xl font-headline font-extrabold tracking-tighter">
+                {fmt(prediction.predicted_price)}
+              </h1>
+              <p className="text-primary-fixed-dim text-sm">
+                {formData?.postcode && <span className="font-semibold text-white">{formData.postcode} · </span>}
+                {propLabel} · Valued {new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+              </p>
+
+            </div>
+          </div>
+        </section>
+
+        {/* ─── MAIN GRID ─── */}
+        <section className="max-w-7xl mx-auto px-8 py-12 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+          {/* LEFT 8-col */}
+          <div className="lg:col-span-8 space-y-8">
+
+            {/* Per-prediction Feature Contributions */}
+            <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
+              <h2 className="text-2xl font-headline font-extrabold text-primary mb-1">What's Driving This Valuation?</h2>
+              <p className="text-sm text-on-surface-variant mb-2">
+                The factors below are specific to <strong className="text-primary">{formData?.postcode || 'this property'}</strong> — each one shows how much it raised or lowered the estimated value.
+              </p>
+              <div className="flex items-center gap-4 mb-8 text-xs font-bold">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm" style={{ background: '#006c49' }} />
+                  <span className="text-on-surface-variant">Added value</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-3 rounded-sm" style={{ background: '#ba1a1a' }} />
+                  <span className="text-on-surface-variant">Reduced value</span>
+                </span>
+              </div>
+
+              {contributions.length > 0 ? (
+                <div className="space-y-4">
+                  {contributions.map(({ feature, contribution_pct, direction }) => {
+                    const absVal = Math.abs(contribution_pct)
+                    const isUp   = direction === 'up'
+                    const maxPct = Math.abs(contributions[0]?.contribution_pct) || 1
+                    const barWidth = Math.round((absVal / maxPct) * 100)
+                    return (
+                      <div key={feature} className="space-y-1.5">
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="font-semibold text-on-surface">{FEATURE_NAMES[feature] || feature}</span>
+                          <span
+                            className="font-bold tabular-nums"
+                            style={{ color: isUp ? '#006c49' : '#ba1a1a' }}
+                          >
+                            {isUp ? '+' : '−'}{absVal.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="h-2 bg-surface-container rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-700"
+                            style={{
+                              width: `${barWidth}%`,
+                              background: isUp ? '#006c49' : '#ba1a1a',
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-on-surface-variant">No contribution data available.</p>
+              )}
+              <p className="text-[10px] text-on-surface-variant/50 mt-6 leading-relaxed">
+                Each factor's contribution is calculated specifically for this property — the same feature can add or reduce value depending on your location and property profile.
+              </p>
+            </div>
+
+            {/* Local Context */}
+            <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
+              <h2 className="text-2xl font-headline font-extrabold text-primary mb-2">Location Snapshot</h2>
+              <p className="text-sm text-on-surface-variant mb-6">Distances sourced from OpenStreetMap for <strong className="text-primary">{formData?.postcode || 'this postcode'}</strong>.</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[
+                  { icon: 'train',    label: 'Nearest Railway Station', value: formData.distance_to_nearest_station_miles != null ? `${formData.distance_to_nearest_station_miles} miles` : 'N/A' },
+                  { icon: 'school',   label: 'Nearest School',          value: formData.distance_to_nearest_school_miles  != null ? `${formData.distance_to_nearest_school_miles} miles`  : 'N/A' },
+                  { icon: 'park',     label: 'Nearest Green Space',     value: formData.distance_to_nearest_park_miles    != null ? `${formData.distance_to_nearest_park_miles} miles`    : 'N/A' },
+                  { icon: 'account_balance', label: 'Bank of England Base Rate', value: `${formData.bank_rate_at_sale_pct}%` },
+                ].map(({ icon, label, value }) => (
+                  <div key={label} className="bg-surface-container-low p-6 rounded-lg">
+                    <span className="material-symbols-outlined text-secondary mb-2 block">{icon}</span>
+                    <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">{label}</p>
+                    <p className="text-xl font-headline font-bold text-primary">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Property Details Submitted */}
+            <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
+              <h2 className="text-2xl font-headline font-extrabold text-primary mb-8">Valuation Input Summary</h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-y-8 gap-x-12">
+                {[
+                  { label: 'Postcode',          value: formData.postcode     || '—' },
+                  { label: 'Property Type',      value: propLabel },
+                  { label: 'Floor Area',         value: `${formData.floor_area_sqm} m²` },
+                  { label: 'Rooms',              value: formData.room_count },
+                  { label: 'Tenure',             value: tenureLabel },
+                  { label: 'Construction Era',   value: ageBandDisplay },
+                  { label: 'EPC Score',          value: formData.current_epc_score },
+                  { label: 'New Build',          value: formData.is_new_build ? 'Yes' : 'No' },
+                  { label: 'Valuation Date',     value: new Date(formData.sale_year, formData.sale_month - 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) },
+                ].map(({ label, value }) => (
+                  <div key={label}>
+                    <p className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest mb-1 font-label">{label}</p>
+                    <p className="font-bold text-primary">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT 4-col sticky */}
+          <div className="lg:col-span-4">
+            <div className="sticky top-24 space-y-6">
+
+              {/* Valuation Breakdown */}
+              <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
+                <h3 className="text-sm font-bold text-on-surface-variant uppercase tracking-widest mb-6 font-label">
+                  Estimated Value
+                </h3>
+                <div className="p-6 rounded-lg mb-6" style={{ background: 'rgba(108,248,187,0.15)' }}>
+                  <p className="text-xs font-bold text-on-secondary-container uppercase mb-1 font-label">Our Estimate</p>
+                  <p className="text-3xl font-headline font-extrabold text-secondary">
+                    {fmt(prediction.predicted_price)}
+                  </p>
+                </div>
+                {/* Typical Range ±1σ */}
+                <div className="rounded-lg p-4" style={{ background: 'rgba(0,108,73,0.08)', border: '1px solid rgba(0,108,73,0.2)' }}>
+                  <p className="text-[10px] font-bold text-secondary uppercase tracking-wider mb-3 font-label">
+                    Expected Range
+                  </p>
+                  <div className="flex items-center justify-between">
+                    <div className="text-center">
+                      <p className="text-[9px] text-on-surface-variant uppercase font-bold mb-0.5">Low</p>
+                      <p className="text-lg font-headline font-extrabold text-primary">{fmt(typical_lo)}</p>
+                    </div>
+                    <div className="flex-1 mx-3 h-[2px]" style={{ background: 'linear-gradient(to right, #006c49, #6cf8bb, #006c49)' }} />
+                    <div className="text-center">
+                      <p className="text-[9px] text-on-surface-variant uppercase font-bold mb-0.5">High</p>
+                      <p className="text-lg font-headline font-extrabold text-primary">{fmt(typical_hi)}</p>
+                    </div>
+                  </div>
+                  <p className="text-[9px] text-on-surface-variant/50 mt-3 leading-relaxed">
+                    Most comparable properties transact within this range.
+                  </p>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div className="space-y-3">
+                <button
+                  onClick={() => navigate('/predict')}
+                  className="w-full bg-secondary text-white py-4 rounded-xl font-bold hover:opacity-90 transition-all flex items-center justify-center gap-2"
+                >
+                  <span className="material-symbols-outlined">add_circle</span>
+                  Predict Another Property
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={saved}
+                  className="w-full bg-surface-container-highest text-primary py-4 rounded-xl font-bold hover:bg-surface-container-high transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  <span className="material-symbols-outlined">{saved ? 'check_circle' : 'bookmark'}</span>
+                  {saved ? 'Saved to History' : 'Save to History'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ─── PREDICTION HISTORY ─── */}
+        <section className="max-w-7xl mx-auto px-8 pb-24">
+          <div className="bg-surface-container-lowest rounded-xl overflow-hidden" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
+            <div
+              className="p-8 flex justify-between items-center"
+              style={{ borderBottom: '1px solid #edeef0' }}
+            >
+              <h2 className="text-2xl font-headline font-extrabold text-primary">Previous Valuations</h2>
+              {history.length > 0 && (
+                <div className="flex items-center gap-4">
+                  <span className="text-secondary font-bold text-sm">{history.length} record{history.length !== 1 ? 's' : ''}</span>
+                  <button
+                    onClick={handleClearAll}
+                    className="flex items-center gap-1 text-xs font-bold text-error hover:text-error/80 transition-colors px-3 py-1.5 rounded-lg hover:bg-error-container transition-all"
+                  >
+                    <span className="material-symbols-outlined text-sm">delete_sweep</span>
+                    Clear All
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {history.length === 0 ? (
+              <div className="p-12 text-center text-on-surface-variant">
+                <span className="material-symbols-outlined text-5xl text-outline-variant mb-4 block">history</span>
+                <p className="font-semibold">No saved valuations yet.</p>
+                <p className="text-sm mt-1">Click "Save to History" to keep a record of this valuation.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-surface-container-low text-[10px] font-bold text-on-surface-variant uppercase tracking-widest font-label">
+                    <tr>
+                      {['Date', 'Postcode', 'Type', 'Floor Area', 'Prediction', 'PI Range', ''].map(h => (
+                        <th key={h} className="px-6 py-4">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {history.map(row => (
+                      <tr
+                        key={row.id}
+                        className="transition-colors"
+                        style={{ borderBottom: '1px solid #edeef0' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f3f4f6'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}
+                      >
+                        <td className="px-6 py-5 text-sm">{fmtDate(row.created_at)}</td>
+                        <td className="px-6 py-5 text-sm font-bold">{row.postcode || '—'}</td>
+                        <td className="px-6 py-5 text-sm">{row.property_type || '—'}</td>
+                        <td className="px-6 py-5 text-sm">{row.floor_area_sqm ? `${row.floor_area_sqm} m²` : '—'}</td>
+                        <td className="px-6 py-5 text-sm font-bold text-secondary">{fmt(row.predicted_price)}</td>
+                        <td className="px-6 py-5 text-sm text-on-surface-variant">
+                          {fmt(row.confidence_low)} – {fmt(row.confidence_high)}
+                        </td>
+                        <td className="px-6 py-5">
+                          <button
+                            onClick={() => handleDelete(row.id)}
+                            title="Remove this record"
+                            className="w-8 h-8 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-error hover:bg-error-container transition-all"
+                          >
+                            <span className="material-symbols-outlined text-base">delete</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </section>
+
+      </main>
+      <Footer />
+    </div>
+  )
+}
