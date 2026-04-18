@@ -16,17 +16,27 @@ function haversine(lat1, lon1, lat2, lon2) {
 /** Query Overpass for the nearest element matching a tag, within `radius` metres */
 async function findNearest(lat, lon, query, radius = 5000) {
   const fullQuery = `
-    [out:json][timeout:20];
+    [out:json][timeout:15];
     (
       ${query.replace(/RADIUS/g, radius).replace(/LAT/g, lat).replace(/LON/g, lon)}
     );
     out center 5;
   `
-  const res = await fetch(OVERPASS_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(fullQuery),
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 16000) // 16 s JS-side cap
+  let res
+  try {
+    res = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(fullQuery),
+      signal: controller.signal,
+    })
+  } catch {
+    return null // aborted or network error → use fallback
+  } finally {
+    clearTimeout(timer)
+  }
   if (!res.ok) return null
   const data = await res.json()
   if (!data.elements || data.elements.length === 0) return null
