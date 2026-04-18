@@ -283,51 +283,49 @@ export default function Results() {
                 {amenitiesLoading && (
                   <span className="ml-2 inline-flex items-center gap-1 text-secondary text-xs font-semibold">
                     <span className="material-symbols-outlined animate-spin text-sm" style={{ animationDuration: '1s' }}>refresh</span>
-                    Fetching…
+                    Fetching nearby places…
                   </span>
                 )}
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Station */}
-                <div className="bg-surface-container-low p-6 rounded-lg">
-                  <span className="material-symbols-outlined text-secondary mb-2 block">train</span>
-                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Nearest Railway Station</p>
-                  <p className="text-xl font-headline font-bold text-primary">
-                    {amenitiesLoading
-                      ? <span className="text-on-surface-variant text-base font-medium animate-pulse">Fetching…</span>
-                      : amenities?.distance_to_nearest_station_miles != null
-                        ? `${amenities.distance_to_nearest_station_miles} miles`
-                        : 'Not found'}
-                  </p>
-                </div>
-                {/* School */}
-                <div className="bg-surface-container-low p-6 rounded-lg">
-                  <span className="material-symbols-outlined text-secondary mb-2 block">school</span>
-                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Nearest School</p>
-                  <p className="text-xl font-headline font-bold text-primary">
-                    {amenitiesLoading
-                      ? <span className="text-on-surface-variant text-base font-medium animate-pulse">Fetching…</span>
-                      : amenities?.distance_to_nearest_school_miles != null
-                        ? `${amenities.distance_to_nearest_school_miles} miles`
-                        : 'Not found'}
-                  </p>
-                </div>
-                {/* Bank Rate — always available */}
-                <div className="bg-surface-container-low p-6 rounded-lg">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+
+                {/* — OSM-sourced distances (loading → real value → "Not found") — */}
+                {[
+                  { key: 'distance_to_nearest_station_miles',     icon: 'train',            label: 'Railway Station' },
+                  { key: 'distance_to_nearest_school_miles',      icon: 'school',           label: 'Nearest School' },
+                  { key: 'distance_to_nearest_supermarket_miles', icon: 'shopping_cart',    label: 'Supermarket' },
+                  { key: 'distance_to_nearest_pharmacy_miles',    icon: 'local_pharmacy',   label: 'Pharmacy' },
+                ].map(({ key, icon, label }) => (
+                  <div key={key} className="bg-surface-container-low p-5 rounded-lg">
+                    <span className="material-symbols-outlined text-secondary mb-2 block">{icon}</span>
+                    <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label mb-1">{label}</p>
+                    <p className="text-lg font-headline font-bold text-primary">
+                      {amenitiesLoading
+                        ? <span className="text-on-surface-variant text-sm font-medium animate-pulse">Fetching…</span>
+                        : amenities?.[key] != null
+                          ? `${amenities[key]} mi`
+                          : <span className="text-on-surface-variant text-sm font-medium">Not found</span>}
+                    </p>
+                  </div>
+                ))}
+
+                {/* — Always-available context data — */}
+                <div className="bg-surface-container-low p-5 rounded-lg">
                   <span className="material-symbols-outlined text-secondary mb-2 block">account_balance</span>
-                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Bank of England Base Rate</p>
-                  <p className="text-xl font-headline font-bold text-primary">{formData.bank_rate_at_sale_pct}%</p>
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label mb-1">Bank of England Rate</p>
+                  <p className="text-lg font-headline font-bold text-primary">{formData.bank_rate_at_sale_pct}%</p>
                 </div>
-                {/* IMD Deprivation — always available */}
-                <div className="bg-surface-container-low p-6 rounded-lg">
+
+                <div className="bg-surface-container-low p-5 rounded-lg">
                   <span className="material-symbols-outlined text-secondary mb-2 block">bar_chart</span>
-                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label">Deprivation Rank (IMD)</p>
-                  <p className="text-xl font-headline font-bold text-primary">
+                  <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label mb-1">Deprivation Rank (IMD)</p>
+                  <p className="text-lg font-headline font-bold text-primary">
                     {formData.imd_value != null
                       ? `${formData.imd_value.toLocaleString('en-GB')} / 32,844`
                       : '—'}
                   </p>
                 </div>
+
               </div>
             </div>
 

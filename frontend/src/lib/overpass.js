@@ -20,7 +20,7 @@ async function findNearest(lat, lon, query, radius = 5000) {
     (
       ${query.replace(/RADIUS/g, radius).replace(/LAT/g, lat).replace(/LON/g, lon)}
     );
-    out center 5;
+    out center 10;
   `
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 16000) // 16 s JS-side cap
@@ -33,7 +33,7 @@ async function findNearest(lat, lon, query, radius = 5000) {
       signal: controller.signal,
     })
   } catch {
-    return null // aborted or network error → use fallback
+    return null // aborted or network error
   } finally {
     clearTimeout(timer)
   }
@@ -41,7 +41,7 @@ async function findNearest(lat, lon, query, radius = 5000) {
   const data = await res.json()
   if (!data.elements || data.elements.length === 0) return null
 
-  // Find the closest element from up to 5 results
+  // Find the closest element from up to 10 results
   let minDist = Infinity
   for (const el of data.elements) {
     const elLat = el.lat ?? el.center?.lat
@@ -55,34 +55,52 @@ async function findNearest(lat, lon, query, radius = 5000) {
 
 /**
  * Fetch real amenity distances from Overpass API (OpenStreetMap).
- * Falls back to sensible defaults if Overpass is slow / unreachable.
+ * All queries run in parallel; returns null for any that time-out or aren't found.
  */
 export async function getAmenityDistances(lat, lon) {
-  // Station query
+
+  // Station — covers full stations AND smaller halts (many UK suburban stations
+  // are tagged railway=halt, e.g. Turkey Street, Southbury Road, etc.)
   const stationQuery = `
-    node["railway"="station"](around:RADIUS,LAT,LON);
-    way["railway"="station"](around:RADIUS,LAT,LON);
+    node["railway"~"station|halt"](around:RADIUS,LAT,LON);
+    way["railway"~"station|halt"](around:RADIUS,LAT,LON);
+    node["public_transport"="station"](around:RADIUS,LAT,LON);
   `
 
-  // School query
+  // School
   const schoolQuery = `
     node["amenity"="school"](around:RADIUS,LAT,LON);
     way["amenity"="school"](around:RADIUS,LAT,LON);
   `
 
-  const [station, school] = await Promise.allSettled([
+  // Supermarket / grocery store
+  const supermarketQuery = `
+    node["shop"~"supermarket|convenience"](around:RADIUS,LAT,LON);
+    way["shop"~"supermarket|convenience"](around:RADIUS,LAT,LON);
+  `
+
+  // Pharmacy
+  const pharmacyQuery = `
+    node["amenity"="pharmacy"](around:RADIUS,LAT,LON);
+    way["amenity"="pharmacy"](around:RADIUS,LAT,LON);
+  `
+
+  const [station, school, supermarket, pharmacy] = await Promise.allSettled([
     findNearest(lat, lon, stationQuery),
     findNearest(lat, lon, schoolQuery),
+    findNearest(lat, lon, supermarketQuery),
+    findNearest(lat, lon, pharmacyQuery),
   ])
 
+  const pick = (result) =>
+    result.status === 'fulfilled' && result.value != null
+      ? +result.value.toFixed(2)
+      : null
+
   return {
-    distance_to_nearest_station_miles:
-      station.status === 'fulfilled' && station.value != null
-        ? +station.value.toFixed(3)
-        : null,                          // null = not found, caller decides fallback
-    distance_to_nearest_school_miles:
-      school.status === 'fulfilled' && school.value != null
-        ? +school.value.toFixed(3)
-        : null,
+    distance_to_nearest_station_miles:    pick(station),
+    distance_to_nearest_school_miles:     pick(school),
+    distance_to_nearest_supermarket_miles: pick(supermarket),
+    distance_to_nearest_pharmacy_miles:    pick(pharmacy),
   }
 }
