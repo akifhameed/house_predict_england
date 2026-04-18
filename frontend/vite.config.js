@@ -8,16 +8,19 @@ export default defineConfig({
     tailwindcss(),
   ],
   build: {
-    // Split large vendor libraries into separate cacheable chunks
     rollupOptions: {
       output: {
-        manualChunks: {
-          // React core — rarely changes, browsers cache it aggressively
-          'vendor-react': ['react', 'react-dom'],
-          // Router
-          'vendor-router': ['react-router-dom'],
-          // Supabase client
-          'vendor-supabase': ['@supabase/supabase-js'],
+        // Vite 8 / Rolldown requires manualChunks as a function
+        manualChunks(id) {
+          if (id.includes('node_modules/react-dom') || id.includes('node_modules/react/')) {
+            return 'vendor-react'
+          }
+          if (id.includes('node_modules/react-router')) {
+            return 'vendor-router'
+          }
+          if (id.includes('node_modules/@supabase')) {
+            return 'vendor-supabase'
+          }
         },
       },
     },
