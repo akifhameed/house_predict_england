@@ -1,4 +1,9 @@
-const OVERPASS_URL = 'https://overpass-api.de/api/interpreter'
+// Primary and fallback Overpass endpoints — if the main server is overloaded
+// the fallback (kumi) is often available.
+const OVERPASS_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+]
 
 /** Haversine distance in miles between two lat/lon points */
 function haversine(lat1, lon1, lat2, lon2) {
@@ -26,19 +31,38 @@ function nearestMiles(lat, lon, elements) {
   return best === Infinity ? null : +best.toFixed(2)
 }
 
+/** Try one Overpass endpoint, returning parsed elements or throwing */
+async function tryFetch(url, query, timeoutMs) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(query),
+      signal: controller.signal,
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    return data.elements || []
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /**
  * Fetch all amenity distances in ONE Overpass request.
  *
- * Sending 4 parallel requests to overpass-api.de triggers rate-limiting
- * (max 2 concurrent connections per IP). A single combined query avoids
- * this entirely and is also faster overall.
+ * Tries the primary Overpass server first; if that fails or times out,
+ * automatically retries on a mirror server. This handles the common case
+ * where overpass-api.de is temporarily overloaded.
  */
 export async function getAmenityDistances(lat, lon) {
-  const radius = 5000   // 5 km for stations/schools
+  const radius = 5000     // 5 km for stations/schools
   const nearRadius = 2000 // 2 km for shops/pharmacies (more urban)
 
   const query = `
-    [out:json][timeout:20];
+    [out:json][timeout:25];
     (
       node["railway"~"station|halt"](around:${radius},${lat},${lon});
       way["railway"~"station|halt"](around:${radius},${lat},${lon});
@@ -53,41 +77,37 @@ export async function getAmenityDistances(lat, lon) {
     out center tags 60;
   `
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 18000) // 18 s cap
-  let res
-  try {
-    res = await fetch(OVERPASS_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(query),
-      signal: controller.signal,
-    })
-  } catch {
-    return { distance_to_nearest_station_miles: null, distance_to_nearest_school_miles: null,
-             distance_to_nearest_supermarket_miles: null, distance_to_nearest_pharmacy_miles: null }
-  } finally {
-    clearTimeout(timer)
+  const NULL_RESULT = {
+    distance_to_nearest_station_miles:     null,
+    distance_to_nearest_school_miles:      null,
+    distance_to_nearest_supermarket_miles: null,
+    distance_to_nearest_pharmacy_miles:    null,
   }
 
-  if (!res.ok) {
-    return { distance_to_nearest_station_miles: null, distance_to_nearest_school_miles: null,
-             distance_to_nearest_supermarket_miles: null, distance_to_nearest_pharmacy_miles: null }
+  let els = null
+
+  // Try each endpoint in order; stop as soon as one succeeds
+  for (const url of OVERPASS_URLS) {
+    try {
+      els = await tryFetch(url, query, 25000) // 25 s per attempt
+      break
+    } catch {
+      // try next server
+    }
   }
 
-  const data = await res.json()
-  const els = data.elements || []
+  if (!els) return NULL_RESULT
 
-  // Partition elements by type using their tags
-  const stations    = els.filter(el =>
+  // Partition elements by type using their OSM tags
+  const stations = els.filter(el =>
     el.tags?.railway === 'station' || el.tags?.railway === 'halt' ||
     el.tags?.public_transport === 'station'
   )
-  const schools     = els.filter(el => el.tags?.amenity === 'school')
+  const schools = els.filter(el => el.tags?.amenity === 'school')
   const supermarkets = els.filter(el =>
     el.tags?.shop === 'supermarket' || el.tags?.shop === 'convenience'
   )
-  const pharmacies  = els.filter(el => el.tags?.amenity === 'pharmacy')
+  const pharmacies = els.filter(el => el.tags?.amenity === 'pharmacy')
 
   return {
     distance_to_nearest_station_miles:     nearestMiles(lat, lon, stations),

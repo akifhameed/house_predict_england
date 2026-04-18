@@ -61,18 +61,35 @@ export default function Results() {
   /* ── Amenity distances — fetched in background on Results page ── */
   const [amenities, setAmenities]               = useState(null)
   const [amenitiesLoading, setAmenitiesLoading] = useState(true)
+  const [amenitiesFailed, setAmenitiesFailed]   = useState(false)
 
-  useEffect(() => {
-    let live = true
-    if (formData?.latitude && formData?.longitude) {
-      getAmenityDistances(formData.latitude, formData.longitude)
-        .then(d  => { if (live) { setAmenities(d); setAmenitiesLoading(false) } })
-        .catch(() => { if (live) setAmenitiesLoading(false) })
-    } else {
+  function fetchAmenities() {
+    if (!formData?.latitude || !formData?.longitude) {
       setAmenitiesLoading(false)
+      return () => {}
     }
+    setAmenitiesLoading(true)
+    setAmenitiesFailed(false)
+    let live = true
+    getAmenityDistances(formData.latitude, formData.longitude)
+      .then(d => {
+        if (!live) return
+        setAmenities(d)
+        setAmenitiesLoading(false)
+        // If every value is null the request silently failed — flag it so the
+        // user can see a Retry button instead of permanent "Not found" cards.
+        const allNull = Object.values(d).every(v => v === null)
+        setAmenitiesFailed(allNull)
+      })
+      .catch(() => {
+        if (!live) return
+        setAmenitiesLoading(false)
+        setAmenitiesFailed(true)
+      })
     return () => { live = false }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }
+
+  useEffect(fetchAmenities, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Load history from Supabase ── */
   useEffect(() => {
@@ -278,13 +295,24 @@ export default function Results() {
             {/* Local Context */}
             <div className="bg-surface-container-lowest rounded-xl p-8" style={{ boxShadow: '0px 2px 8px rgba(25,28,30,0.04)' }}>
               <h2 className="text-2xl font-headline font-extrabold text-primary mb-2">Location Snapshot</h2>
-              <p className="text-sm text-on-surface-variant mb-6">
-                Distances sourced live from OpenStreetMap for <strong className="text-primary">{formData?.postcode || 'this postcode'}</strong>.
+              <p className="text-sm text-on-surface-variant mb-6 flex flex-wrap items-center gap-2">
+                <span>
+                  Distances sourced live from OpenStreetMap for <strong className="text-primary">{formData?.postcode || 'this postcode'}</strong>.
+                </span>
                 {amenitiesLoading && (
-                  <span className="ml-2 inline-flex items-center gap-1 text-secondary text-xs font-semibold">
+                  <span className="inline-flex items-center gap-1 text-secondary text-xs font-semibold">
                     <span className="material-symbols-outlined animate-spin text-sm" style={{ animationDuration: '1s' }}>refresh</span>
                     Fetching nearby places…
                   </span>
+                )}
+                {!amenitiesLoading && amenitiesFailed && (
+                  <button
+                    onClick={fetchAmenities}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-secondary border border-secondary/40 rounded-full px-3 py-0.5 hover:bg-secondary/10 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-sm">refresh</span>
+                    Retry
+                  </button>
                 )}
               </p>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
