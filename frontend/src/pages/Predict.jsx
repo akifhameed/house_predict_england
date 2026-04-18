@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
-import { predict as apiPredict, getImd } from '../lib/api'
+import { predict as apiPredict, getImd, healthCheck } from '../lib/api'
 import { autocomplete, lookup, extractModelFields } from '../lib/postcodes'
 
 /* ── Tooltip component ── */
@@ -110,6 +110,13 @@ export default function Predict() {
   const [loading, setLoading]   = useState(false)
   const [error, setError]       = useState('')
   const dropdownRef = useRef(null)
+
+  /* ── Warm up Render backend the moment this page loads ──
+     Render free tier sleeps after inactivity; pinging /health here
+     means the server is warm by the time the user submits the form. */
+  useEffect(() => {
+    healthCheck().catch(() => {/* silent — just waking the server */})
+  }, [])
 
   /* ── Postcode autocomplete (debounced 300ms) ── */
   useEffect(() => {

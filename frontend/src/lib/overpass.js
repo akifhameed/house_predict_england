@@ -13,94 +13,86 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-/** Query Overpass for the nearest element matching a tag, within `radius` metres */
-async function findNearest(lat, lon, query, radius = 5000) {
-  const fullQuery = `
-    [out:json][timeout:15];
+/** Return the distance in miles to the nearest element in an array, or null */
+function nearestMiles(lat, lon, elements) {
+  let best = Infinity
+  for (const el of elements) {
+    const elLat = el.lat ?? el.center?.lat
+    const elLon = el.lon ?? el.center?.lon
+    if (elLat == null || elLon == null) continue
+    const d = haversine(lat, lon, elLat, elLon)
+    if (d < best) best = d
+  }
+  return best === Infinity ? null : +best.toFixed(2)
+}
+
+/**
+ * Fetch all amenity distances in ONE Overpass request.
+ *
+ * Sending 4 parallel requests to overpass-api.de triggers rate-limiting
+ * (max 2 concurrent connections per IP). A single combined query avoids
+ * this entirely and is also faster overall.
+ */
+export async function getAmenityDistances(lat, lon) {
+  const radius = 5000   // 5 km for stations/schools
+  const nearRadius = 2000 // 2 km for shops/pharmacies (more urban)
+
+  const query = `
+    [out:json][timeout:20];
     (
-      ${query.replace(/RADIUS/g, radius).replace(/LAT/g, lat).replace(/LON/g, lon)}
+      node["railway"~"station|halt"](around:${radius},${lat},${lon});
+      way["railway"~"station|halt"](around:${radius},${lat},${lon});
+      node["public_transport"="station"](around:${radius},${lat},${lon});
+      node["amenity"="school"](around:${radius},${lat},${lon});
+      way["amenity"="school"](around:${radius},${lat},${lon});
+      node["shop"~"supermarket|convenience"](around:${nearRadius},${lat},${lon});
+      way["shop"~"supermarket|convenience"](around:${nearRadius},${lat},${lon});
+      node["amenity"="pharmacy"](around:${nearRadius},${lat},${lon});
+      way["amenity"="pharmacy"](around:${nearRadius},${lat},${lon});
     );
-    out center 10;
+    out center tags 60;
   `
+
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 16000) // 16 s JS-side cap
+  const timer = setTimeout(() => controller.abort(), 18000) // 18 s cap
   let res
   try {
     res = await fetch(OVERPASS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(fullQuery),
+      body: 'data=' + encodeURIComponent(query),
       signal: controller.signal,
     })
   } catch {
-    return null // aborted or network error
+    return { distance_to_nearest_station_miles: null, distance_to_nearest_school_miles: null,
+             distance_to_nearest_supermarket_miles: null, distance_to_nearest_pharmacy_miles: null }
   } finally {
     clearTimeout(timer)
   }
-  if (!res.ok) return null
-  const data = await res.json()
-  if (!data.elements || data.elements.length === 0) return null
 
-  // Find the closest element from up to 10 results
-  let minDist = Infinity
-  for (const el of data.elements) {
-    const elLat = el.lat ?? el.center?.lat
-    const elLon = el.lon ?? el.center?.lon
-    if (elLat == null || elLon == null) continue
-    const d = haversine(lat, lon, elLat, elLon)
-    if (d < minDist) minDist = d
+  if (!res.ok) {
+    return { distance_to_nearest_station_miles: null, distance_to_nearest_school_miles: null,
+             distance_to_nearest_supermarket_miles: null, distance_to_nearest_pharmacy_miles: null }
   }
-  return minDist === Infinity ? null : minDist
-}
 
-/**
- * Fetch real amenity distances from Overpass API (OpenStreetMap).
- * All queries run in parallel; returns null for any that time-out or aren't found.
- */
-export async function getAmenityDistances(lat, lon) {
+  const data = await res.json()
+  const els = data.elements || []
 
-  // Station — covers full stations AND smaller halts (many UK suburban stations
-  // are tagged railway=halt, e.g. Turkey Street, Southbury Road, etc.)
-  const stationQuery = `
-    node["railway"~"station|halt"](around:RADIUS,LAT,LON);
-    way["railway"~"station|halt"](around:RADIUS,LAT,LON);
-    node["public_transport"="station"](around:RADIUS,LAT,LON);
-  `
-
-  // School
-  const schoolQuery = `
-    node["amenity"="school"](around:RADIUS,LAT,LON);
-    way["amenity"="school"](around:RADIUS,LAT,LON);
-  `
-
-  // Supermarket / grocery store
-  const supermarketQuery = `
-    node["shop"~"supermarket|convenience"](around:RADIUS,LAT,LON);
-    way["shop"~"supermarket|convenience"](around:RADIUS,LAT,LON);
-  `
-
-  // Pharmacy
-  const pharmacyQuery = `
-    node["amenity"="pharmacy"](around:RADIUS,LAT,LON);
-    way["amenity"="pharmacy"](around:RADIUS,LAT,LON);
-  `
-
-  const [station, school, supermarket, pharmacy] = await Promise.allSettled([
-    findNearest(lat, lon, stationQuery),
-    findNearest(lat, lon, schoolQuery),
-    findNearest(lat, lon, supermarketQuery),
-    findNearest(lat, lon, pharmacyQuery),
-  ])
-
-  const pick = (result) =>
-    result.status === 'fulfilled' && result.value != null
-      ? +result.value.toFixed(2)
-      : null
+  // Partition elements by type using their tags
+  const stations    = els.filter(el =>
+    el.tags?.railway === 'station' || el.tags?.railway === 'halt' ||
+    el.tags?.public_transport === 'station'
+  )
+  const schools     = els.filter(el => el.tags?.amenity === 'school')
+  const supermarkets = els.filter(el =>
+    el.tags?.shop === 'supermarket' || el.tags?.shop === 'convenience'
+  )
+  const pharmacies  = els.filter(el => el.tags?.amenity === 'pharmacy')
 
   return {
-    distance_to_nearest_station_miles:    pick(station),
-    distance_to_nearest_school_miles:     pick(school),
-    distance_to_nearest_supermarket_miles: pick(supermarket),
-    distance_to_nearest_pharmacy_miles:    pick(pharmacy),
+    distance_to_nearest_station_miles:     nearestMiles(lat, lon, stations),
+    distance_to_nearest_school_miles:      nearestMiles(lat, lon, schools),
+    distance_to_nearest_supermarket_miles: nearestMiles(lat, lon, supermarkets),
+    distance_to_nearest_pharmacy_miles:    nearestMiles(lat, lon, pharmacies),
   }
 }
