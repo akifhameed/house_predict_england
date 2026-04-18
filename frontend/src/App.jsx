@@ -3,6 +3,8 @@ import Home from './pages/Home'
 import Predict from './pages/Predict'
 import Results from './pages/Results'
 import HowItWorks from './pages/HowItWorks'
+import Login from './pages/Login'
+import Signup from './pages/Signup'
 
 function NotFound() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
       <Route path="/predict"      element={<Predict />} />
       <Route path="/results"      element={<Results />} />
       <Route path="/how-it-works" element={<HowItWorks />} />
+      <Route path="/login"        element={<Login />} />
+      <Route path="/signup"       element={<Signup />} />
       <Route path="*"             element={<NotFound />} />
     </Routes>
   )
