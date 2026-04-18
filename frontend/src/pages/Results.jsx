@@ -315,25 +315,61 @@ export default function Results() {
                   </button>
                 )}
               </p>
+              {/* Satellite imagery strip */}
+              {formData?.latitude && formData?.longitude && (() => {
+                const lat = formData.latitude
+                const lon = formData.longitude
+                const dLon = 0.007, dLat = 0.005
+                const bbox = `${(lon-dLon).toFixed(6)},${(lat-dLat).toFixed(6)},${(lon+dLon).toFixed(6)},${(lat+dLat).toFixed(6)}`
+                const src  = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/export?bbox=${bbox}&bboxSR=4326&size=800,260&format=png&f=image`
+                return (
+                  <div className="mb-4 rounded-lg overflow-hidden relative" style={{ height: '180px' }}>
+                    <img
+                      src={src}
+                      alt={`Satellite view of ${formData.postcode}`}
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                    {/* centre-pin marker */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="flex flex-col items-center">
+                        <div className="w-3 h-3 rounded-full border-2 border-white shadow-lg" style={{ background: '#6cf8bb' }} />
+                        <div className="w-0.5 h-3 bg-white shadow" />
+                      </div>
+                    </div>
+                    <span className="absolute bottom-2 right-2 text-[9px] text-white/60 font-medium">
+                      © Esri, Maxar, Earthstar Geographics
+                    </span>
+                  </div>
+                )
+              })()}
+
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
 
                 {/* — OSM-sourced distances (loading → real value → "Not found") — */}
                 {[
-                  { key: 'distance_to_nearest_station_miles',     icon: 'train',            label: 'Railway Station' },
-                  { key: 'distance_to_nearest_school_miles',      icon: 'school',           label: 'Nearest School' },
-                  { key: 'distance_to_nearest_supermarket_miles', icon: 'shopping_cart',    label: 'Supermarket' },
-                  { key: 'distance_to_nearest_pharmacy_miles',    icon: 'local_pharmacy',   label: 'Pharmacy' },
-                ].map(({ key, icon, label }) => (
-                  <div key={key} className="bg-surface-container-low p-5 rounded-lg">
+                  { distKey: 'distance_to_nearest_station_miles',     nameKey: 'nearest_station_name',     icon: 'train',          label: 'Nearest Station'  },
+                  { distKey: 'distance_to_nearest_school_miles',      nameKey: 'nearest_school_name',      icon: 'school',         label: 'Nearest School'   },
+                  { distKey: 'distance_to_nearest_supermarket_miles', nameKey: 'nearest_supermarket_name', icon: 'shopping_cart',  label: 'Supermarket'      },
+                  { distKey: 'distance_to_nearest_pharmacy_miles',    nameKey: 'nearest_pharmacy_name',    icon: 'local_pharmacy', label: 'Pharmacy'         },
+                ].map(({ distKey, nameKey, icon, label }) => (
+                  <div key={distKey} className="bg-surface-container-low p-5 rounded-lg">
                     <span className="material-symbols-outlined text-secondary mb-2 block">{icon}</span>
                     <p className="text-xs text-on-surface-variant font-bold uppercase tracking-wider font-label mb-1">{label}</p>
-                    <p className="text-lg font-headline font-bold text-primary">
-                      {amenitiesLoading
-                        ? <span className="text-on-surface-variant text-sm font-medium animate-pulse">Fetching…</span>
-                        : amenities?.[key] != null
-                          ? `${amenities[key]} mi`
-                          : <span className="text-on-surface-variant text-sm font-medium">Not found</span>}
-                    </p>
+                    {amenitiesLoading ? (
+                      <p className="text-sm font-medium text-on-surface-variant animate-pulse">Fetching…</p>
+                    ) : amenities?.[distKey] != null ? (
+                      <>
+                        <p className="text-lg font-headline font-bold text-primary leading-tight">{amenities[distKey]} mi</p>
+                        {amenities[nameKey] && (
+                          <p className="text-xs text-on-surface-variant mt-0.5 truncate" title={amenities[nameKey]}>
+                            {amenities[nameKey]}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm font-medium text-on-surface-variant">Not found</p>
+                    )}
                   </div>
                 ))}
 

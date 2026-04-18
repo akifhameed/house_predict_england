@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar'
 import Footer from '../components/Footer'
 import { predict as apiPredict, getImd, healthCheck } from '../lib/api'
 import { autocomplete, lookup, extractModelFields } from '../lib/postcodes'
+import { prefetchAmenities } from '../lib/overpass'
 
 /* ── Tooltip component ── */
 function Tooltip({ text }) {
@@ -153,7 +154,12 @@ export default function Predict() {
       const result = await lookup(postcode)
       const fields = extractModelFields(result)
       setForm(prev => ({ ...prev, ...fields, postcode }))
-      // Fetch IMD rank — fast API call, no amenity fetch here
+      // Kick off Overpass in the background immediately — by the time the
+      // user fills in the rest of the form and hits submit, it'll be cached.
+      if (fields.latitude && fields.longitude) {
+        prefetchAmenities(fields.latitude, fields.longitude)
+      }
+      // Fetch IMD rank — fast API call
       const imdRank = await getImd(fields.lsoa_code)
       setForm(prev => ({ ...prev, imd_value: imdRank }))
     } catch (err) {

@@ -1,9 +1,16 @@
-// Primary and fallback Overpass endpoints — if the main server is overloaded
-// the fallback (kumi) is often available.
+// Primary and fallback Overpass endpoints
 const OVERPASS_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
 ]
+
+/**
+ * Module-level promise cache keyed by "lat,lon".
+ * Survives page navigation within the SPA — so if Predict.jsx kicks off the
+ * fetch when the postcode is selected, Results.jsx just reads the cached
+ * promise instead of waiting for a brand-new request.
+ */
+const _cache = new Map()
 
 /** Haversine distance in miles between two lat/lon points */
 function haversine(lat1, lon1, lat2, lon2) {
@@ -18,17 +25,25 @@ function haversine(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-/** Return the distance in miles to the nearest element in an array, or null */
-function nearestMiles(lat, lon, elements) {
-  let best = Infinity
+/**
+ * Return distance in miles AND the OSM name of the nearest element,
+ * or { miles: null, name: null } if the array is empty.
+ */
+function nearestInfo(lat, lon, elements) {
+  let bestDist = Infinity
+  let bestName = null
   for (const el of elements) {
     const elLat = el.lat ?? el.center?.lat
     const elLon = el.lon ?? el.center?.lon
     if (elLat == null || elLon == null) continue
     const d = haversine(lat, lon, elLat, elLon)
-    if (d < best) best = d
+    if (d < bestDist) {
+      bestDist = d
+      bestName = el.tags?.name || null
+    }
   }
-  return best === Infinity ? null : +best.toFixed(2)
+  if (bestDist === Infinity) return { miles: null, name: null }
+  return { miles: +bestDist.toFixed(2), name: bestName }
 }
 
 /** Try one Overpass endpoint, returning parsed elements or throwing */
@@ -50,16 +65,16 @@ async function tryFetch(url, query, timeoutMs) {
   }
 }
 
-/**
- * Fetch all amenity distances in ONE Overpass request.
- *
- * Tries the primary Overpass server first; if that fails or times out,
- * automatically retries on a mirror server. This handles the common case
- * where overpass-api.de is temporarily overloaded.
- */
-export async function getAmenityDistances(lat, lon) {
-  const radius = 5000     // 5 km for stations/schools
-  const nearRadius = 2000 // 2 km for shops/pharmacies (more urban)
+const NULL_RESULT = {
+  distance_to_nearest_station_miles:     null, nearest_station_name:     null,
+  distance_to_nearest_school_miles:      null, nearest_school_name:      null,
+  distance_to_nearest_supermarket_miles: null, nearest_supermarket_name: null,
+  distance_to_nearest_pharmacy_miles:    null, nearest_pharmacy_name:    null,
+}
+
+async function _doFetch(lat, lon) {
+  const radius    = 5000  // 5 km for stations/schools
+  const nearRadius = 2000 // 2 km for shops/pharmacies
 
   const query = `
     [out:json][timeout:25];
@@ -77,42 +92,61 @@ export async function getAmenityDistances(lat, lon) {
     out center tags 60;
   `
 
-  const NULL_RESULT = {
-    distance_to_nearest_station_miles:     null,
-    distance_to_nearest_school_miles:      null,
-    distance_to_nearest_supermarket_miles: null,
-    distance_to_nearest_pharmacy_miles:    null,
-  }
-
   let els = null
-
-  // Try each endpoint in order; stop as soon as one succeeds
   for (const url of OVERPASS_URLS) {
     try {
-      els = await tryFetch(url, query, 25000) // 25 s per attempt
+      els = await tryFetch(url, query, 25000)
       break
     } catch {
-      // try next server
+      // try next mirror
     }
   }
-
   if (!els) return NULL_RESULT
 
-  // Partition elements by type using their OSM tags
   const stations = els.filter(el =>
     el.tags?.railway === 'station' || el.tags?.railway === 'halt' ||
     el.tags?.public_transport === 'station'
   )
-  const schools = els.filter(el => el.tags?.amenity === 'school')
+  const schools      = els.filter(el => el.tags?.amenity === 'school')
   const supermarkets = els.filter(el =>
     el.tags?.shop === 'supermarket' || el.tags?.shop === 'convenience'
   )
-  const pharmacies = els.filter(el => el.tags?.amenity === 'pharmacy')
+  const pharmacies   = els.filter(el => el.tags?.amenity === 'pharmacy')
+
+  const si = nearestInfo(lat, lon, stations)
+  const sc = nearestInfo(lat, lon, schools)
+  const sm = nearestInfo(lat, lon, supermarkets)
+  const ph = nearestInfo(lat, lon, pharmacies)
 
   return {
-    distance_to_nearest_station_miles:     nearestMiles(lat, lon, stations),
-    distance_to_nearest_school_miles:      nearestMiles(lat, lon, schools),
-    distance_to_nearest_supermarket_miles: nearestMiles(lat, lon, supermarkets),
-    distance_to_nearest_pharmacy_miles:    nearestMiles(lat, lon, pharmacies),
+    distance_to_nearest_station_miles:     si.miles, nearest_station_name:     si.name,
+    distance_to_nearest_school_miles:      sc.miles, nearest_school_name:      sc.name,
+    distance_to_nearest_supermarket_miles: sm.miles, nearest_supermarket_name: sm.name,
+    distance_to_nearest_pharmacy_miles:    ph.miles, nearest_pharmacy_name:    ph.name,
   }
+}
+
+/**
+ * Start fetching amenities in the background and cache the promise.
+ * Call this as soon as lat/lon is known (e.g. on postcode select in
+ * Predict.jsx) so the data is ready by the time Results.jsx mounts.
+ */
+export function prefetchAmenities(lat, lon) {
+  const key = `${lat},${lon}`
+  if (!_cache.has(key)) {
+    _cache.set(key, _doFetch(lat, lon))
+  }
+}
+
+/**
+ * Returns cached amenity distances + names (starts fetch if not yet cached).
+ * If prefetchAmenities() was already called for these coordinates the
+ * returned promise resolves immediately with the cached result.
+ */
+export async function getAmenityDistances(lat, lon) {
+  const key = `${lat},${lon}`
+  if (!_cache.has(key)) {
+    _cache.set(key, _doFetch(lat, lon))
+  }
+  return _cache.get(key)
 }
