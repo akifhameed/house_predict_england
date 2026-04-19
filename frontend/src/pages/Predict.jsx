@@ -91,7 +91,7 @@ const INITIAL_FORM = {
   latitude:          null,
   longitude:         null,
   imd_value:         15000,
-  // Overpass-resolved
+  // Overpass-resolved (used as model fallbacks)
   distance_to_nearest_station_miles: null,
   distance_to_nearest_school_miles:  null,
   distance_to_nearest_park_miles:    null,
@@ -104,7 +104,7 @@ const INITIAL_FORM = {
 
 export default function Predict() {
   const navigate = useNavigate()
-  const [form, setForm] = useState(INITIAL_FORM)
+  const [form, setForm]             = useState(INITIAL_FORM)
   const [query, setQuery]           = useState('')
   const [suggestions, setSuggestions] = useState([])
   const [lookupDone, setLookupDone]   = useState(false)
@@ -112,14 +112,12 @@ export default function Predict() {
   const [error, setError]       = useState('')
   const dropdownRef = useRef(null)
 
-  /* ── Warm up Render backend the moment this page loads ──
-     Render free tier sleeps after inactivity; pinging /health here
-     means the server is warm by the time the user submits the form. */
+  /* ── Warm up Render backend on page load ── */
   useEffect(() => {
-    healthCheck().catch(() => {/* silent — just waking the server */})
+    healthCheck().catch(() => {})
   }, [])
 
-  /* ── Postcode autocomplete (debounced 300ms) ── */
+  /* ── Postcode autocomplete (debounced 300 ms) ── */
   useEffect(() => {
     if (lookupDone) return
     const timer = setTimeout(async () => {
@@ -154,27 +152,24 @@ export default function Predict() {
       const result = await lookup(postcode)
       const fields = extractModelFields(result)
       setForm(prev => ({ ...prev, ...fields, postcode }))
-      // Kick off Overpass in the background immediately — by the time the
-      // user fills in the rest of the form and hits submit, it'll be cached.
+      // Fire Overpass fetch immediately — runs while the user fills in the
+      // rest of the form so it's cached by the time Results.jsx mounts.
       if (fields.latitude && fields.longitude) {
         prefetchAmenities(fields.latitude, fields.longitude)
       }
-      // Fetch IMD rank — fast API call
       const imdRank = await getImd(fields.lsoa_code)
       setForm(prev => ({ ...prev, imd_value: imdRank }))
-    } catch (err) {
+    } catch {
       setError('Could not look up postcode — please try another.')
       setLookupDone(false)
     }
   }
 
-  /* ── Form field helpers ── */
   const set = (key, val) => setForm(prev => ({ ...prev, [key]: val }))
 
   /* ── Submit ── */
   async function handleSubmit(e) {
     e.preventDefault()
-    // ── Frontend validation ──
     if (!form.postcode_district) {
       setError('Please select a postcode from the suggestions before continuing.')
       return
@@ -229,8 +224,18 @@ export default function Predict() {
     }
   }
 
-  const epcLetter = getEpcLetter(form.current_epc_score)
+  const epcLetter    = getEpcLetter(form.current_epc_score)
   const propTypeLabel = PROPERTY_TYPES.find(p => p.value === form.property_type)?.label || ''
+
+  /* ── Helper: locked overlay for sections 02 & 03 ── */
+  const LockHint = () => (
+    <div className="absolute inset-0 rounded-xl flex items-start justify-end p-6 pointer-events-none z-10">
+      <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-widest bg-surface-container px-3 py-1.5 rounded-full border border-outline-variant/30">
+        <span className="material-symbols-outlined text-sm">lock</span>
+        Select postcode first
+      </span>
+    </div>
+  )
 
   return (
     <div className="bg-background text-on-background font-body antialiased">
@@ -251,26 +256,34 @@ export default function Predict() {
               Predict Your Property's Value
             </h1>
             <p className="text-on-primary-container text-lg max-w-md">
-              Three simple sections. Your postcode does the rest.
+              Start with your postcode — everything else follows from there.
             </p>
           </div>
 
-          {/* Step indicator */}
+          {/* Dynamic step indicator */}
           <div className="flex justify-end items-center">
             <div className="flex items-center gap-6">
               {[
-                { n: '1', label: 'Basics',   active: true },
-                { n: '2', label: 'Location', active: false },
-                { n: '3', label: 'Details',  active: false },
-              ].map(({ n, label, active }, i) => (
+                { n: '1', label: 'Location', done: lookupDone,  active: !lookupDone },
+                { n: '2', label: 'Basics',   done: false,        active: lookupDone  },
+                { n: '3', label: 'Details',  done: false,        active: lookupDone  },
+              ].map(({ n, label, done, active }, i) => (
                 <div key={n} className="flex items-center gap-6">
                   <div className="flex flex-col items-center gap-2">
-                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold ${active ? 'bg-secondary text-on-secondary' : 'border-2 border-white/20 text-white'}`}>
-                      {n}
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold transition-all duration-300 ${
+                      done    ? 'bg-secondary text-on-secondary' :
+                      active  ? 'bg-secondary text-on-secondary ring-4 ring-secondary/30' :
+                                'border-2 border-white/20 text-white/40'
+                    }`}>
+                      {done
+                        ? <span className="material-symbols-outlined text-lg">check</span>
+                        : n}
                     </div>
-                    <span className="text-xs text-white/60 font-medium">{label}</span>
+                    <span className={`text-xs font-medium transition-colors ${active || done ? 'text-white' : 'text-white/30'}`}>
+                      {label}
+                    </span>
                   </div>
-                  {i < 2 && <div className="w-12 h-[2px] bg-white/10" />}
+                  {i < 2 && <div className={`w-12 h-[2px] transition-colors ${lookupDone ? 'bg-secondary/40' : 'bg-white/10'}`} />}
                 </div>
               ))}
             </div>
@@ -282,12 +295,110 @@ export default function Predict() {
       <main className="max-w-[1440px] mx-auto px-12 py-16 grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-12">
         <form onSubmit={handleSubmit} className="space-y-12">
 
-          {/* SECTION 01: Property Basics */}
-          <section className="bg-surface-container-lowest p-8 rounded-xl space-y-8">
-            <div className="flex items-center gap-4 mb-4">
+          {/* ══════════════════════════════════════════════
+              SECTION 01 — Location  (REQUIRED FIRST)
+          ══════════════════════════════════════════════ */}
+          <section className="bg-surface-container-lowest p-8 rounded-xl space-y-6 relative"
+            style={{ boxShadow: !lookupDone ? '0 0 0 2px #006c49' : undefined }}>
+
+            <div className="flex items-center gap-4">
               <div className="w-1 h-8 bg-secondary rounded-full" />
-              <h2 className="text-2xl font-headline font-bold text-primary">01. Property Basics</h2>
+              <h2 className="text-2xl font-headline font-bold text-primary">01. Your Location</h2>
+              {!lookupDone && (
+                <span className="ml-auto text-[10px] font-bold text-secondary uppercase tracking-widest bg-secondary/10 px-3 py-1 rounded-full border border-secondary/30">
+                  Start here
+                </span>
+              )}
+              {lookupDone && (
+                <span className="ml-auto inline-flex items-center gap-1 text-[10px] font-bold text-secondary uppercase tracking-widest">
+                  <span className="material-symbols-outlined text-sm">check_circle</span>
+                  {form.postcode}
+                </span>
+              )}
             </div>
+
+            <div className="space-y-2" ref={dropdownRef}>
+              <label className="text-sm font-semibold text-on-surface-variant block">Postcode</label>
+              <div className="relative">
+                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+                <input
+                  type="text"
+                  value={query}
+                  onChange={e => { setQuery(e.target.value); setLookupDone(false) }}
+                  placeholder="Type your postcode — e.g. E18 1PD, SW11 2JQ…"
+                  className="w-full bg-surface-container-highest rounded-lg p-4 pl-12 font-medium text-primary focus:outline-none focus:ring-2 focus:ring-secondary/40"
+                  style={{ border: 'none' }}
+                  autoComplete="off"
+                  autoFocus
+                />
+
+                {suggestions.length > 0 && (
+                  <div
+                    className="absolute left-0 right-0 top-full mt-1 rounded-lg overflow-hidden z-50"
+                    style={{ background: '#f3f4f6', borderTop: '4px solid #006c49', boxShadow: '0 8px 24px rgba(3,22,52,0.15)' }}
+                  >
+                    {suggestions.map(pc => (
+                      <button
+                        key={pc}
+                        type="button"
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => handlePostcodeSelect(pc)}
+                        className="w-full p-4 hover:bg-white cursor-pointer flex justify-between items-center transition-colors text-left"
+                      >
+                        <span className="font-bold text-primary">{pc}</span>
+                        <span className="text-xs bg-secondary text-on-secondary px-2 py-0.5 rounded uppercase font-bold">Select</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <p className="text-xs text-on-surface-variant/70 italic">
+                Selecting a postcode auto-fills your region, local authority and coordinates —
+                and immediately starts fetching nearby amenities in the background.
+              </p>
+
+              {/* Auto-filled chips */}
+              {lookupDone && form.region_code && (
+                <div className="flex flex-wrap gap-4 pt-2">
+                  {[
+                    { icon: 'map',             label: 'Region',          value: form.region_code },
+                    { icon: 'account_balance', label: 'Local Authority', value: form.local_authority_code },
+                    { icon: 'location_on',     label: 'Coordinates',     value: form.latitude ? `${form.latitude.toFixed(4)}, ${form.longitude.toFixed(4)}` : '—' },
+                  ].map(({ icon, label, value }) => (
+                    <div key={label} className="bg-secondary/10 border border-secondary/20 px-4 py-3 rounded-lg flex items-center gap-3">
+                      <span className="material-symbols-outlined text-sm text-secondary">{icon}</span>
+                      <div className="flex flex-col">
+                        <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</span>
+                        <span className="text-sm font-bold text-primary">{value}</span>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Live amenity prefetch status */}
+                  <div className="bg-secondary/10 border border-secondary/20 px-4 py-3 rounded-lg flex items-center gap-3">
+                    <span className="material-symbols-outlined animate-spin text-sm text-secondary" style={{ animationDuration: '1.4s' }}>refresh</span>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">Nearby Data</span>
+                      <span className="text-sm font-bold text-secondary">Fetching in background…</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* ══════════════════════════════════════════════
+              SECTION 02 — Property Basics
+          ══════════════════════════════════════════════ */}
+          <section className={`bg-surface-container-lowest p-8 rounded-xl space-y-8 relative transition-opacity duration-300 ${!lookupDone ? 'opacity-40 pointer-events-none' : ''}`}>
+            {!lookupDone && <LockHint />}
+
+            <div className="flex items-center gap-4 mb-4">
+              <div className={`w-1 h-8 rounded-full ${lookupDone ? 'bg-secondary' : 'bg-outline-variant'}`} />
+              <h2 className="text-2xl font-headline font-bold text-primary">02. Property Basics</h2>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
               {/* Property Type */}
@@ -381,79 +492,17 @@ export default function Predict() {
             </div>
           </section>
 
-          {/* SECTION 02: Location */}
-          <section className="bg-surface-container-lowest p-8 rounded-xl space-y-8">
+          {/* ══════════════════════════════════════════════
+              SECTION 03 — Property Details
+          ══════════════════════════════════════════════ */}
+          <section className={`bg-surface-container-lowest p-8 rounded-xl space-y-8 relative transition-opacity duration-300 ${!lookupDone ? 'opacity-40 pointer-events-none' : ''}`}>
+            {!lookupDone && <LockHint />}
+
             <div className="flex items-center gap-4 mb-4">
-              <div className="w-1 h-8 bg-secondary rounded-full" />
-              <h2 className="text-2xl font-headline font-bold text-primary">02. Location</h2>
-            </div>
-
-            <div className="space-y-2" ref={dropdownRef}>
-              <label className="text-sm font-semibold text-on-surface-variant block">Postcode Search</label>
-              <div className="relative">
-                <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-                <input
-                  type="text"
-                  value={query}
-                  onChange={e => { setQuery(e.target.value); setLookupDone(false) }}
-                  placeholder="Start typing your postcode — e.g. E18, SW11…"
-                  className="w-full bg-surface-container-highest rounded-lg p-4 pl-12 font-medium text-primary focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  style={{ border: 'none' }}
-                  autoComplete="off"
-                />
-
-                {/* Autocomplete dropdown — absolutely positioned so it floats over page content */}
-                {suggestions.length > 0 && (
-                  <div
-                    className="absolute left-0 right-0 top-full mt-1 rounded-lg overflow-hidden z-50"
-                    style={{ background: '#f3f4f6', borderTop: '4px solid #006c49', boxShadow: '0 8px 24px rgba(3,22,52,0.15)' }}
-                  >
-                    {suggestions.map(pc => (
-                      <button
-                        key={pc}
-                        type="button"
-                        onMouseDown={e => e.preventDefault()}
-                        onClick={() => handlePostcodeSelect(pc)}
-                        className="w-full p-4 hover:bg-white cursor-pointer flex justify-between items-center transition-colors text-left"
-                      >
-                        <span className="font-bold text-primary">{pc}</span>
-                        <span className="text-xs bg-secondary text-on-secondary px-2 py-0.5 rounded uppercase font-bold">Select</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <p className="text-xs text-on-surface-variant/70 italic">
-                Postcode data auto-fills region, local authority and coordinates. Nearby distances are fetched after prediction.
-              </p>
-
-              {/* Auto-filled location chips */}
-              {lookupDone && form.region_code && (
-                <div className="flex flex-wrap gap-4 pt-4">
-                  {[
-                    { icon: 'map',             label: 'Region',          value: form.region_code },
-                    { icon: 'account_balance', label: 'Local Authority', value: form.local_authority_code },
-                    { icon: 'location_on',     label: 'Coordinates',     value: form.latitude ? `${form.latitude.toFixed(4)}, ${form.longitude.toFixed(4)}` : '—' },
-                  ].map(({ icon, label, value }) => (
-                    <div key={label} className="bg-surface-variant/40 px-4 py-3 rounded-lg flex items-center gap-3">
-                      <span className="material-symbols-outlined text-sm text-secondary">{icon}</span>
-                      <div className="flex flex-col">
-                        <span className="text-[10px] uppercase font-bold text-on-surface-variant tracking-wider">{label}</span>
-                        <span className="text-sm font-bold text-primary">{value}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* SECTION 03: Property Details */}
-          <section className="bg-surface-container-lowest p-8 rounded-xl space-y-8">
-            <div className="flex items-center gap-4 mb-4">
-              <div className="w-1 h-8 bg-secondary rounded-full" />
+              <div className={`w-1 h-8 rounded-full ${lookupDone ? 'bg-secondary' : 'bg-outline-variant'}`} />
               <h2 className="text-2xl font-headline font-bold text-primary">03. Property Details</h2>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
 
               {/* Construction Age Band */}
@@ -487,20 +536,16 @@ export default function Predict() {
                     {form.current_epc_score} — Rating {epcLetter}
                   </div>
                 </div>
-                {/* Slider: visual gradient bar with invisible range input overlaid on top */}
                 <div className="relative h-6 flex items-center">
-                  {/* Visual gradient track */}
                   <div
                     className="absolute left-0 right-0 h-4 rounded-full pointer-events-none"
                     style={{ background: 'linear-gradient(to right, #ef4444, #f59e0b, #22c55e)' }}
                   >
-                    {/* Visual thumb */}
                     <div
                       className="absolute w-6 h-6 bg-white border-4 border-primary rounded-full top-1/2 -translate-y-1/2 -translate-x-1/2 shadow-md"
                       style={{ left: `${form.current_epc_score}%` }}
                     />
                   </div>
-                  {/* Transparent range input sits on top and captures all drag events */}
                   <input
                     type="range"
                     min="1"
@@ -528,13 +573,18 @@ export default function Predict() {
           {/* Submit */}
           <button
             type="submit"
-            disabled={loading}
-            className="w-full bg-secondary text-white py-6 rounded-xl flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={loading || !lookupDone}
+            className="w-full bg-secondary text-white py-6 rounded-xl flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? (
               <>
                 <span className="material-symbols-outlined animate-spin" style={{ animationDuration: '1s' }}>refresh</span>
                 <span className="text-xl font-headline font-extrabold uppercase tracking-widest">Running Model…</span>
+              </>
+            ) : !lookupDone ? (
+              <>
+                <span className="material-symbols-outlined">lock</span>
+                <span className="text-xl font-headline font-extrabold uppercase tracking-widest">Select a Postcode First</span>
               </>
             ) : (
               <>
@@ -554,9 +604,9 @@ export default function Predict() {
             </h3>
             <div className="space-y-5">
               {[
+                { label: 'Postcode',      value: form.postcode || '—', highlight: true },
                 { label: 'Property Type', value: propTypeLabel || '—' },
                 { label: 'Tenure',        value: form.tenure_type === 'F' ? 'Freehold' : 'Leasehold' },
-                { label: 'Postcode',      value: form.postcode || '—', highlight: true },
                 { label: 'Floor Area',    value: form.floor_area_sqm ? `${form.floor_area_sqm} m²` : '—' },
                 { label: 'Rooms',         value: form.room_count },
                 { label: 'Age Band',      value: form.construction_age_band === 'Unknown' ? "Don't know" : form.construction_age_band.replace('England and Wales: ', '') },
@@ -577,7 +627,9 @@ export default function Predict() {
               <p className="text-[10px] uppercase font-bold text-outline tracking-[0.2em] mb-1">Predicted Value</p>
               <div className="text-4xl font-headline font-black text-outline-variant tracking-tighter">— — —</div>
               <p className="text-[10px] text-on-surface-variant/60 mt-4 leading-relaxed">
-                Submit the form to unlock your AI valuation.
+                {!lookupDone
+                  ? 'Enter your postcode above to begin.'
+                  : 'Submit the form to unlock your AI valuation.'}
               </p>
             </div>
           </div>
