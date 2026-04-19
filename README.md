@@ -41,7 +41,7 @@ ml-dl/
 │       ├── pages/
 │       │   ├── Home.jsx          # Landing page
 │       │   ├── Predict.jsx       # Postcode-first prediction form
-│       │   ├── Results.jsx       # Results, satellite map, history
+│       │   ├── Results.jsx       # Results + satellite map + prediction history (no separate history page)
 │       │   ├── HowItWorks.jsx    # Interactive explainer
 │       │   ├── Login.jsx         # Supabase email + Google login
 │       │   └── Signup.jsx        # New account registration
