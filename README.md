@@ -15,7 +15,8 @@ Built with **React + Vite** (frontend), **FastAPI + LightGBM** (backend), and tr
 | Postcode API | postcodes.io (free, no key required) |
 | Amenity distances | OpenStreetMap Overpass API |
 | IMD data | ONS Indices of Deprivation 2019 |
-| History storage | Browser localStorage (upgrade path to Supabase documented) |
+| Authentication | Supabase (email/password + Google OAuth) |
+| History storage | Supabase PostgreSQL (saved_predictions table, row-level security) |
 
 ---
 
@@ -191,24 +192,18 @@ Set via system environment or a `.env` file before starting uvicorn.
 
 ---
 
-## Supabase Integration (future)
+## Supabase Integration
 
-The file `frontend/src/lib/supabase.js` currently uses `localStorage` as a zero-config drop-in.  
-To upgrade to Supabase cloud storage, replace the two functions in that file:
+Authentication and prediction history are fully integrated with Supabase:
 
-```js
-import { createClient } from '@supabase/supabase-js'
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+- **Email/password** and **Google OAuth** login via `Login.jsx` / `Signup.jsx`
+- **Session management** via `AuthContext.jsx` (wraps entire app, `useAuth()` hook)
+- **History storage** in `saved_predictions` Supabase table with row-level security (RLS)
+- Environment variables required (set in Vercel dashboard for production):
 
-export async function savePrediction(record) {
-  const { data } = await supabase.from('saved_predictions').insert(record).select().single()
-  return data
-}
-
-export async function getHistory() {
-  const { data } = await supabase.from('saved_predictions').select('*').order('created_at', { ascending: false })
-  return data ?? []
-}
+```
+VITE_SUPABASE_URL=your_supabase_project_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
 ---
