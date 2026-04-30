@@ -1,10 +1,20 @@
 # HousePredict AI
 
-A full-stack machine learning application for UK residential property price prediction.  
-Built with **React + Vite** (frontend), **FastAPI + LightGBM** (backend), and trained on **4.5 million** HM Land Registry transactions.
+A full-stack machine learning application for residential property price prediction in **England**.  
+Built with **React + Vite** (frontend), **FastAPI + LightGBM** (backend), and trained on **4.5 million** HM Land Registry transactions (England only).
 
 Live demo: **https://house-predict-england.vercel.app**  
-Backend API docs: **https://housepredict-backend.onrender.com/docs**
+Backend API docs: **https://house-predict-backend-ldy9.onrender.com/docs**
+
+---
+
+## Live URLs
+
+| Resource | URL |
+|---|---|
+| Frontend (Vercel) | https://house-predict-england.vercel.app |
+| Backend API (Render) | https://house-predict-backend-ldy9.onrender.com |
+| Source repository (GitHub) | https://github.com/akifhameed/house_predict_england |
 
 ---
 

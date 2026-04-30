@@ -36,6 +36,17 @@ Thumbs.db
 *.log
 npm-debug.log*
 
+# ── Coverage scratch files ───────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ── Local-only report build artefacts (do NOT push) ──────────
+report_assets/
+sse-cw2-report-v2.docx
+*.pdf
+
 # ── Vite scaffolding boilerplate (not used in this project) ──
 frontend/src/assets/react.svg
 frontend/src/assets/vite.svg

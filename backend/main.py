@@ -343,7 +343,7 @@ def predict(inp: PropertyInput):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.get("/feature-importance", summary="LightGBM feature importance (top 20 by gain)")
+@app.get("/feature-importance", summary="LightGBM feature importance (all 21 features, ranked by gain)")
 def feature_importance():
     gains  = lgb_model.feature_importance(importance_type="gain")
     splits = lgb_model.feature_importance(importance_type="split")
@@ -358,7 +358,7 @@ def feature_importance():
         for name, g, s in zip(FEATURE_COLS, gains, splits)
     ]
     features.sort(key=lambda x: x["gain_pct"], reverse=True)
-    return {"features": features[:20]}
+    return {"features": features}
 
 
 @app.get("/encoders/{column}", summary="Return known classes for a label-encoded column")

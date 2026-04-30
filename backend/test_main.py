@@ -237,15 +237,15 @@ class TestFeatureImportance:
         assert "features" in data
         assert isinstance(data["features"], list)
 
-    def test_at_most_20_features_returned(self):
+    def test_all_21_features_returned(self):
         data = client.get("/feature-importance").json()
-        assert len(data["features"]) <= 20
+        assert len(data["features"]) == 21
 
     def test_gain_pcts_sum_to_100(self):
         data = client.get("/feature-importance").json()
         total = sum(f["gain_pct"] for f in data["features"])
-        # May not sum to exactly 100 if top-20 only, but should be <= 100
-        assert total <= 100.5
+        # All 21 features returned, gain_pcts should sum to ~100 (rounding tolerance)
+        assert 99.5 <= total <= 100.5
 
     def test_each_feature_has_required_keys(self):
         data = client.get("/feature-importance").json()

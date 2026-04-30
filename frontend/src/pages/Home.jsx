@@ -41,7 +41,7 @@ export default function Home() {
           <div className="relative">
             <div className="rounded-3xl overflow-hidden aspect-[4/3] shadow-2xl bg-primary-container flex items-center justify-center">
               <img
-                alt="Modern UK residential property"
+                alt="England Residential Property"
                 className="w-full h-full object-cover"
                 src="https://images.unsplash.com/photo-1570129477492-45c003edd2be?w=800&q=80"
                 onError={e => {
