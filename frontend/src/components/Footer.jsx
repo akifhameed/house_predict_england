@@ -9,7 +9,7 @@ const NAV_COL = [
 const RESOURCE_COL = [
   { href: 'https://landregistry.data.gov.uk/app/ppd', label: 'Data Sources' },
   { to: '/how-it-works', label: 'Model Performance' },
-  { href: 'https://github.com', label: 'GitHub Repository' },
+  { href: 'https://github.com/akifhameed/house_predict_england', label: 'GitHub Repository' },
 ]
 
 export default function Footer() {
